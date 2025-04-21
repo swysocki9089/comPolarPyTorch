@@ -18,6 +18,86 @@ from torch.nn.functional import (
 )
 
 
+class ComPolar64:
+    def __init__(self, magnitude, phase):
+        self.magnitude = magnitude
+        self.phase = phase
+        self.isPolar = True
+        self._complex = None
+
+    @classmethod
+    def from_complex(cls, c: torch.Tensor):
+        assert torch.is_complex(c), "Input must be a complex tensor"
+        magnitude = torch.abs(c)
+        phase = torch.angle(c)
+        encoded_polar = torch.complex(magnitude, phase).to(torch.complex64)
+        obj = cls(magnitude, phase)
+        obj._complex = encoded_polar
+        obj.isPolar = True
+        return obj
+    
+    def polar_encoded(self): # returns c64 data type, this time with mag and phase as the real / imag parts
+        return torch.complex(self.magnitude, self.phase).to(torch.complex64)
+
+    @classmethod # c64, but already translated into our desired form
+    def from_polar_encoded(cls, encoded: torch.Tensor):
+        magnitude = encoded.real
+        phase = encoded.imag
+        return cls(magnitude, phase)
+
+
+    def to_cartesian(self):
+        real = self.magnitude * torch.cos(self.phase)
+        imag = self.magnitude * torch.sin(self.phase)
+        self._complex = torch.complex(real, imag).to(torch.complex64)
+        self.isPolar = False
+        return self._complex
+
+    def get_magnitude(self):
+        return self.magnitude
+
+    def get_phase(self):
+        return self.phase
+
+    def _get_cartesian_value(self):
+        return self.to_cartesian() if self._complex is None else self._complex
+
+    def __add__(self, other):
+        if isinstance(other, ComPolar64):
+            result = self._get_cartesian_value() + other._get_cartesian_value()
+        elif torch.is_complex(other):
+            result = self._get_cartesian_value() + other
+        else:
+            return NotImplemented
+        return ComPolar64.from_complex(result)
+
+    def __mul__(self, other):
+        if isinstance(other, ComPolar64):
+            magnitude = self.get_magnitude() * other.get_magnitude()
+            phase = self.get_phase() + other.get_phase()
+            return ComPolar64(magnitude, phase)
+        elif isinstance(other, (int, float, torch.Tensor)):
+            # Scalar multiplication
+            return ComPolar64(self.magnitude * other, self.phase)
+        else:
+            return NotImplemented
+
+    def __eq__(self, other):
+        if isinstance(other, ComPolar64):
+            return torch.allclose(self._get_cartesian_value(), other._get_cartesian_value())
+        elif torch.is_complex(other):
+            return torch.allclose(self._get_cartesian_value(), other)
+        return NotImplemented
+
+    def __repr__(self):
+        if self.isPolar:
+            return f"ComPolar64(magnitude={self.magnitude}, phase={self.phase}, isPolar={self.isPolar})"
+        else:
+            return f"ComPolar64(cartesian={self._complex}, isPolar={self.isPolar})"
+
+
+
+
 from torch.nn.functional import max_pool2d, avg_pool2d, dropout, dropout2d, interpolate
 from torch import tanh, relu, sigmoid
 
