@@ -1,7 +1,7 @@
 import torch
 import math
 import pytest
-from complexFunctions import ComPolar64
+from comPolar64 import ComPolar64
 
 # === Helper: Coterminal phase equality ===
 def assert_coterminal(phase1, phase2, atol=1e-5):
@@ -15,22 +15,22 @@ def assert_coterminal(phase1, phase2, atol=1e-5):
 # 01. Conversion and Representation Tests
 # ------------------------------------------------------------------------------
 
-def test_01_from_complex_and_to_cartesian():
+def test_01_cartesian_encoding_and_decoding():
     c = torch.tensor(3.0 + 4.0j)
-    polar = ComPolar64.from_complex(c)
+    polar = ComPolar64.from_cartesian(c)
     cartesian = polar.to_cartesian()
     assert torch.allclose(cartesian, c, atol=1e-5)
 
 def test_02_cartesian_to_polar_to_cartesian_cycle():
     c = torch.tensor(-1.0 - 1.0j)
-    z = ComPolar64.from_complex(c)
+    z = ComPolar64.from_cartesian(c)
     c2 = z.to_cartesian()
     assert torch.allclose(c, c2, atol=1e-5)
 
 def test_03_polar_encoding_and_decoding():
     original = ComPolar64(torch.tensor(2.0), torch.tensor(math.pi / 2))
-    encoded = original.polar_encoded()
-    decoded = ComPolar64.from_polar_encoded(encoded)
+    encoded = original._polar
+    decoded = ComPolar64.from_polar(encoded)
     assert torch.allclose(decoded.magnitude, original.magnitude, atol=1e-5)
     assert torch.allclose(decoded.phase, original.phase, atol=1e-5)
 
@@ -39,14 +39,14 @@ def test_03_polar_encoding_and_decoding():
 # ------------------------------------------------------------------------------
 
 def test_04_addition_of_polar_instances():
-    a = ComPolar64.from_complex(torch.tensor(1.0 + 1.0j))
-    b = ComPolar64.from_complex(torch.tensor(1.0 - 1.0j))
+    a = ComPolar64.from_cartesian(torch.tensor(1.0 + 1.0j))
+    b = ComPolar64.from_cartesian(torch.tensor(1.0 - 1.0j))
     result = a + b
     expected = torch.tensor(2.0 + 0.0j)
     assert torch.allclose(result.to_cartesian(), expected, atol=1e-5)
 
 def test_05_addition_with_native_complex():
-    a = ComPolar64.from_complex(torch.tensor(1.0 + 1.0j))
+    a = ComPolar64.from_cartesian(torch.tensor(1.0 + 1.0j))
     result = a + torch.tensor(0.0 + 2.0j)
     expected = torch.tensor(1.0 + 3.0j)
     assert torch.allclose(result.to_cartesian(), expected, atol=1e-5)
