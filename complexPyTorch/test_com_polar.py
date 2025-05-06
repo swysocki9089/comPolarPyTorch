@@ -93,3 +93,15 @@ def test_11_multiplication_invalid_type():
     z = ComPolar64(1.0, 0.0)
     with pytest.raises(TypeError):
         _ = z * "invalid"
+
+
+def test_apply_cartesian_function_abs():
+    mag = torch.tensor(3.0)
+    phase = torch.tensor(0.0)  # corresponds to real=3, imag=0
+    polar = ComPolar64(mag, phase)
+
+    result = polar.apply_cartesian_function(torch.abs)
+
+    # Expected: magnitude stays the same (abs(3) = 3)
+    assert torch.allclose(result.get_magnitude(), torch.tensor(3.0), atol=1e-5)
+    assert torch.allclose(result.get_phase(), torch.tensor(0.0), atol=1e-5)

@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from complexPyTorch.complexLayers import ComplexBatchNorm2d, ComplexConv2d, ComplexLinear
 from complexPyTorch.complexFunctions import complex_relu, complex_max_pool2d
+from comPolar64 import ComPolar64
 import time  # added for timing
 
 batch_size = 64
@@ -24,20 +25,27 @@ class ComplexNet(nn.Module):
         self.fc2 = ComplexLinear(500, 10)
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = complex_relu(x)
-        x = complex_max_pool2d(x, 2, 2)
-        x = self.bn(x)
-        x = self.conv2(x)
-        x = complex_relu(x)
-        x = complex_max_pool2d(x, 2, 2)
-        x = x.view(-1, 4*4*20)
-        x = self.fc1(x)
-        x = complex_relu(x)
-        x = self.fc2(x)
-        x = x.abs()
-        x = F.log_softmax(x, dim=1)
-        return x
+        #x = ComPolar64.from_cartesian(x)  # input assumed cartesian
+        x = x.apply_cartesian_function(self.conv1)
+        x = x.apply_cartesian_function(complex_relu)
+        x = x.apply_cartesian_function(lambda t: complex_max_pool2d(t, 2, 2))
+        x = x.apply_cartesian_function(self.bn)
+        x = x.apply_cartesian_function(self.conv2)
+        x = x.apply_cartesian_function(complex_relu)
+        x = x.apply_cartesian_function(lambda t: complex_max_pool2d(t, 2, 2))
+
+        # flatten manually in polar
+        mag = x.get_magnitude().view(-1, 4*4*20)
+        phase = x.get_phase().view(-1, 4*4*20)
+        x = ComPolar64(mag, phase)
+
+        x = x.apply_cartesian_function(self.fc1)
+        x = x.apply_cartesian_function(complex_relu)
+        x = x.apply_cartesian_function(self.fc2)
+
+        logits = x.get_magnitude()
+        logits = F.log_softmax(logits, dim=1)
+        return logits
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = ComplexNet().to(device)
@@ -47,8 +55,9 @@ def train(model, device, train_loader, optimizer, epoch):
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device).type(torch.complex64), target.to(device)
+        polar_data = ComPolar64.from_cartesian(data)
         optimizer.zero_grad()
-        output = model(data)
+        output = model(polar_data)
         loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
@@ -68,6 +77,7 @@ total_start_time = time.time()
 for epoch in range(50):
     epoch_start_time = time.time()
     train(model, device, train_loader, optimizer, epoch)
+
     epoch_end_time = time.time()
     print(f"Epoch {epoch+1} completed in {epoch_end_time - epoch_start_time:.2f} seconds.")
 
@@ -76,5 +86,5 @@ total_end_time = time.time()
 print(f"Total training time: {total_end_time - total_start_time:.2f} seconds.")
 
 # Save model weights
-torch.save(model.state_dict(), 'complexnet_weights.pth')
-print("Model weights saved to complexnet_weights.pth")
+torch.save(model.state_dict(), 'models/ex_cart_wts.pth')
+print("Model weights saved to models/ex_cart_wts.pth")

@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
 
-from polarComplexLayers import PolarConv2d, NaivePolarBatchNorm2d, PolarLinear
-from polarComplexFunctions import polar_relu, polar_max_pool2d
-from comPolar64 import ComPolar64
+from complexPyTorch.polarComplexLayers import PolarConv2d, NaivePolarBatchNorm2d, PolarLinear
+from ..polarComplexFunctions import polar_relu, polar_max_pool2d
+from ..comPolar64 import ComPolar64
 
 import time
 
@@ -83,5 +83,5 @@ for epoch in range(50):
     print(f"Epoch {epoch} time: {epoch_end - epoch_start:.2f} seconds")
 
 end_time = time.time()  # total time end
-torch.save(model.state_dict(), "polar_model.pt")
+torch.save(model.state_dict(), "models/ex_polar_wts.pth")
 print(f"Total training time: {end_time - start_time:.2f} seconds")

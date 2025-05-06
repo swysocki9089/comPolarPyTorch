@@ -127,3 +127,9 @@ class ComPolar64:
     def set_phase(self, new_phase):
         """Return a new instance with phase replaced"""
         return ComPolar64(self.magnitude, new_phase)
+    
+    def apply_cartesian_function(self, func, *args, **kwargs):
+        cartesian_input = self.to_cartesian()
+        cartesian_output = func(cartesian_input, *args, **kwargs)
+        return ComPolar64.from_cartesian(cartesian_output)
+
