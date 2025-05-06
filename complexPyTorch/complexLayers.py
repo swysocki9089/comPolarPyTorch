@@ -266,8 +266,6 @@ class NaiveComplexBatchNorm2d(Module):
 
 
 class _ComplexBatchNorm(Module):
-    running_mean: Optional[torch.Tensor]
-
     def __init__(
         self,
         num_features,
@@ -289,76 +287,80 @@ class _ComplexBatchNorm(Module):
             self.register_parameter("weight", None)
             self.register_parameter("bias", None)
         if self.track_running_stats:
-            self.register_buffer(
-                "running_mean", torch.zeros(
-                    num_features, dtype=torch.complex64)
-            )
+            self.register_buffer("running_mean_r", torch.zeros(num_features))
+            self.register_buffer("running_mean_i", torch.zeros(num_features))
             self.register_buffer("running_covar", torch.zeros(num_features, 3))
-            self.running_covar[:, 0] = 1.4142135623730951
-            self.running_covar[:, 1] = 1.4142135623730951
+            self.running_covar[:, 0] = 1 / 1.4142135623730951
+            self.running_covar[:, 1] = 1 / 1.4142135623730951
             self.register_buffer(
                 "num_batches_tracked", torch.tensor(0, dtype=torch.long)
             )
         else:
-            self.register_parameter("running_mean", None)
+            self.register_parameter("running_mean_r", None)
+            self.register_parameter("running_mean_i", None)
             self.register_parameter("running_covar", None)
             self.register_parameter("num_batches_tracked", None)
         self.reset_parameters()
 
     def reset_running_stats(self):
         if self.track_running_stats:
-            self.running_mean.zero_()
+            self.running_mean_r.zero_()
+            self.running_mean_i.zero_()
             self.running_covar.zero_()
-            self.running_covar[:, 0] = 1.4142135623730951
-            self.running_covar[:, 1] = 1.4142135623730951
+            self.running_covar[:, :2] = 1 / 1.4142135623730951
             self.num_batches_tracked.zero_()
 
     def reset_parameters(self):
         self.reset_running_stats()
         if self.affine:
-            init.constant_(self.weight[:, :2], 1.4142135623730951)
+            init.constant_(self.weight[:, :2], 1 / 1.4142135623730951)
             init.zeros_(self.weight[:, 2])
             init.zeros_(self.bias)
 
-
 class ComplexBatchNorm2d(_ComplexBatchNorm):
-    def forward(self, inp):
-        exponential_average_factor = 0.0
+    def forward(self, inputs):
+        exponential_average_factor = 0.0 if self.momentum is None else self.momentum
 
         if self.training and self.track_running_stats:
             if self.num_batches_tracked is not None:
                 self.num_batches_tracked += 1
                 if self.momentum is None:  # use cumulative moving average
-                    exponential_average_factor = 1.0 / \
-                        float(self.num_batches_tracked)
+                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
                 else:  # use exponential moving average
                     exponential_average_factor = self.momentum
 
-        if self.training or (not self.track_running_stats):
+        if self.training or (not self.training and not self.track_running_stats):
             # calculate mean of real and imaginary part
             # mean does not support automatic differentiation for outputs with complex dtype.
-            mean_r = inp.real.mean([0, 2, 3]).type(torch.complex64)
-            mean_i = inp.imag.mean([0, 2, 3]).type(torch.complex64)
-            mean = mean_r + 1j * mean_i
+
+            mean_r = inputs.real.mean([0, 2, 3])
+            mean_i = inputs.imag.mean([0, 2, 3])
         else:
-            mean = self.running_mean
+            mean_r = self.running_mean_r.clone()
+            mean_i = self.running_mean_i.clone()
 
         if self.training and self.track_running_stats:
             # update running mean
             with torch.no_grad():
-                self.running_mean = (
-                    exponential_average_factor * mean
-                    + (1 - exponential_average_factor) * self.running_mean
+
+                self.running_mean_r[:] = (
+                    exponential_average_factor * mean_r
+                    + (1 - exponential_average_factor) * self.running_mean_r
+                )
+                self.running_mean_i[:] = (
+                    exponential_average_factor * mean_i
+                    + (1 - exponential_average_factor) * self.running_mean_i
                 )
 
-        inp = inp - mean[None, :, None, None]
+        inputs = inputs - (mean_r + 1j * mean_i)[None, :, None, None]
 
-        if self.training or (not self.track_running_stats):
+        if self.training or (not self.training and not self.track_running_stats):
             # Elements of the covariance matrix (biased for train)
-            n = inp.numel() / inp.size(1)
-            Crr = 1.0 / n * inp.real.pow(2).sum(dim=[0, 2, 3]) + self.eps
-            Cii = 1.0 / n * inp.imag.pow(2).sum(dim=[0, 2, 3]) + self.eps
-            Cri = (inp.real.mul(inp.imag)).mean(dim=[0, 2, 3])
+
+            # n = input.numel() / input.size(1)
+            Crr = inputs.real.pow(2).mean(dim=[0, 2, 3]) + self.eps
+            Cii = inputs.imag.pow(2).mean(dim=[0, 2, 3]) + self.eps
+            Cri = (inputs.real * inputs.imag).mean(dim=[0, 2, 3])
         else:
             Crr = self.running_covar[:, 0] + self.eps
             Cii = self.running_covar[:, 1] + self.eps
@@ -367,25 +369,23 @@ class ComplexBatchNorm2d(_ComplexBatchNorm):
         if self.training and self.track_running_stats:
             with torch.no_grad():
                 self.running_covar[:, 0] = (
-                    exponential_average_factor * Crr * n / (n - 1)  #
-                    + (1 - exponential_average_factor) * \
-                    self.running_covar[:, 0]
+                    exponential_average_factor * Crr
+                    + (1 - exponential_average_factor) * self.running_covar[:, 0]
                 )
 
                 self.running_covar[:, 1] = (
-                    exponential_average_factor * Cii * n / (n - 1)
-                    + (1 - exponential_average_factor) *
-                    self.running_covar[:, 1]
+                    exponential_average_factor * Cii
+                    + (1 - exponential_average_factor) * self.running_covar[:, 1]
                 )
 
                 self.running_covar[:, 2] = (
-                    exponential_average_factor * Cri * n / (n - 1)
-                    + (1 - exponential_average_factor) *
-                    self.running_covar[:, 2]
+                    exponential_average_factor * Cri
+                    + (1 - exponential_average_factor) * self.running_covar[:, 2]
                 )
 
         # calculate the inverse square root the covariance matrix
         det = Crr * Cii - Cri.pow(2)
+
         s = torch.sqrt(det)
         t = torch.sqrt(Cii + Crr + 2 * s)
         inverse_st = 1.0 / (s * t)
@@ -393,29 +393,30 @@ class ComplexBatchNorm2d(_ComplexBatchNorm):
         Rii = (Crr + s) * inverse_st
         Rri = -Cri * inverse_st
 
-        inp = (
-            Rrr[None, :, None, None] * inp.real +
-            Rri[None, :, None, None] * inp.imag
+        inputs = (
+            Rrr[None, :, None, None] * inputs.real
+            + Rri[None, :, None, None] * inputs.imag
         ).type(torch.complex64) + 1j * (
-            Rii[None, :, None, None] * inp.imag +
-            Rri[None, :, None, None] * inp.real
+            Rii[None, :, None, None] * inputs.imag
+            + Rri[None, :, None, None] * inputs.real
         ).type(
             torch.complex64
         )
 
         if self.affine:
-            inp = (
-                self.weight[None, :, 0, None, None] * inp.real
-                + self.weight[None, :, 2, None, None] * inp.imag
+            inputs = (
+                self.weight[None, :, 0, None, None] * inputs.real
+                + self.weight[None, :, 2, None, None] * inputs.imag
                 + self.bias[None, :, 0, None, None]
             ).type(torch.complex64) + 1j * (
-                self.weight[None, :, 2, None, None] * inp.real
-                + self.weight[None, :, 1, None, None] * inp.imag
+                self.weight[None, :, 2, None, None] * inputs.real
+                + self.weight[None, :, 1, None, None] * inputs.imag
                 + self.bias[None, :, 1, None, None]
             ).type(
                 torch.complex64
             )
-        return inp
+
+        return inputs
 
 
 class ComplexBatchNorm1d(_ComplexBatchNorm):

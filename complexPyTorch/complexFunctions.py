@@ -16,14 +16,32 @@ from torch.nn.functional import (
     sigmoid,
     tanh,
 )
+import math
 
 
 class ComPolar64:
     def __init__(self, magnitude, phase):
+        # Ensure both are tensors
+        magnitude = torch.as_tensor(magnitude)
+        phase = torch.as_tensor(phase)
+
+        # Handle negative magnitude
+        negative_mask = magnitude < 0
+        if negative_mask.any():
+            magnitude = torch.abs(magnitude)
+            phase = phase + math.pi * negative_mask.float()
+
+        # Wrap phase to (-π, π]
+        # Equivalent to: ((θ + π) % 2π) - π
+        phase = (phase + math.pi) % (2 * math.pi) - math.pi
+
         self.magnitude = magnitude
         self.phase = phase
         self.isPolar = True
         self._complex = None
+        self._cartesian = None  # computed lazily
+
+
 
     @classmethod
     def from_complex(cls, c: torch.Tensor):
@@ -49,9 +67,9 @@ class ComPolar64:
     def to_cartesian(self):
         real = self.magnitude * torch.cos(self.phase)
         imag = self.magnitude * torch.sin(self.phase)
-        self._complex = torch.complex(real, imag).to(torch.complex64)
+        self._cartesian = torch.complex(real, imag).to(torch.complex64)
         self.isPolar = False
-        return self._complex
+        return self._cartesian
 
     def get_magnitude(self):
         return self.magnitude
@@ -60,15 +78,22 @@ class ComPolar64:
         return self.phase
 
     def _get_cartesian_value(self):
-        return self.to_cartesian() if self._complex is None else self._complex
+        if self._cartesian is None:
+            self.to_cartesian()
+        return self._cartesian
+
 
     def __add__(self, other):
+        self_cartesian = self._get_cartesian_value()
+
         if isinstance(other, ComPolar64):
-            result = self._get_cartesian_value() + other._get_cartesian_value()
-        elif torch.is_complex(other):
-            result = self._get_cartesian_value() + other
+            other_cartesian = other._get_cartesian_value()
+            result = self_cartesian + other_cartesian
+        elif isinstance(other, torch.Tensor) and torch.is_complex(other):
+            result = self_cartesian + other
         else:
             return NotImplemented
+
         return ComPolar64.from_complex(result)
 
     def __mul__(self, other):
@@ -94,6 +119,37 @@ class ComPolar64:
             return f"ComPolar64(magnitude={self.magnitude}, phase={self.phase}, isPolar={self.isPolar})"
         else:
             return f"ComPolar64(cartesian={self._complex}, isPolar={self.isPolar})"
+        
+    def scale(self, scalar):
+        """
+        Return a new ComPolar64 instance with the magnitude scaled by a given scalar.
+        The phase remains unchanged.
+        """
+        new_magnitude = self.magnitude * scalar
+        return ComPolar64(new_magnitude, self.phase)
+
+    def rotate(self, angle):
+        """
+        Return a new ComPolar64 instance with the phase increased by a given angle (in radians).
+        The magnitude remains unchanged.
+        """
+        new_phase = self.phase + angle
+        return ComPolar64(self.magnitude, new_phase)
+
+    def set_magnitude(self, new_magnitude):
+        """
+        Return a new ComPolar64 instance with the magnitude set to a new value.
+        The phase remains unchanged.
+        """
+        return ComPolar64(new_magnitude, self.phase)
+
+    def set_phase(self, new_phase):
+        """
+        Return a new ComPolar64 instance with the phase set to a new value.
+        The magnitude remains unchanged.
+        """
+        return ComPolar64(self.magnitude, new_phase)
+
 
 
 
@@ -133,6 +189,17 @@ def complex_normalize(inp):
     real_norm = (real_value - real_value.mean()) / real_value.std()
     imag_norm = (imag_value - imag_value.mean()) / imag_value.std()
     return real_norm.type(torch.complex64) + 1j * imag_norm.type(torch.complex64)
+
+# def polar_normalize(polar: ComPolar64) -> ComPolar64: #ask dr vuran?
+#     mag = polar.get_magnitude() 
+#     mean = mag.mean()
+#     std = mag.std()
+
+#     if std == 0:
+#         std = torch.tensor(1.0, dtype=mag.dtype, device=mag.device)
+
+#     normed_mag = (mag - mean) / std
+#     return ComPolar64(normed_mag, polar.get_phase())
 
 
 def complex_relu(inp):
